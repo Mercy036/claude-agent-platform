@@ -1,0 +1,15 @@
+{
+  "name": "@claude-hackathon/agent",
+  "version": "1.0.0",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.20.1",
+    "@claude-hackathon/database": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

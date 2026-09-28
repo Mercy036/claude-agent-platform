@@ -1,0 +1,16 @@
+{
+  "name": "@claude-hackathon/queue",
+  "version": "1.0.0",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "bullmq": "^5.7.8",
+    "ioredis": "^5.4.1",
+    "@claude-hackathon/database": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

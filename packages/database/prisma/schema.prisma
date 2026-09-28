@@ -1,0 +1,87 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  PARTICIPANT
+}
+
+enum SessionStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  username     String?  @unique
+  password     String
+  team         String?
+  role         Role     @default(PARTICIPANT)
+  status       String   @default("ACTIVE") // ACTIVE, DISABLED
+  tokenLimit   Int      @default(1000000)
+  tokensUsed   Int      @default(0)
+  
+  sessions     AgentSession[]
+  usageRecords TokenUsage[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model AgentSession {
+  id             String        @id @default(uuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id])
+  status         SessionStatus @default(QUEUED)
+  environmentId  String?
+  tokensUsed     Int           @default(0)
+  
+  startedAt      DateTime?
+  endedAt        DateTime?
+  lastActivity   DateTime?
+  
+  usageRecords   TokenUsage[]
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+model TokenUsage {
+  id                  String       @id @default(uuid())
+  userId              String
+  user                User         @relation(fields: [userId], references: [id])
+  sessionId           String
+  session             AgentSession @relation(fields: [sessionId], references: [id])
+  requestId           String       @unique
+  
+  inputTokens         Int
+  outputTokens        Int
+  cacheReadTokens     Int
+  cacheCreationTokens Int
+  totalTokens         Int
+  
+  model               String
+  timestamp           DateTime     @default(now())
+
+  @@index([userId])
+  @@index([timestamp])
+}
+
+model Setting {
+  key   String @id
+  value String
+}

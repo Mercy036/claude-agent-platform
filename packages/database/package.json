@@ -1,0 +1,19 @@
+{
+  "name": "@claude-hackathon/database",
+  "version": "1.0.0",
+  "main": "src/index.ts",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "generate": "prisma generate",
+    "push": "prisma db push",
+    "seed": "ts-node src/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.13.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.13.0",
+    "typescript": "^5.4.5"
+  }
+}

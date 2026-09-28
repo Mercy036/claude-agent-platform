@@ -1,0 +1,27 @@
+{
+  "name": "@claude-hackathon/api",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@claude-hackathon/agent": "*",
+    "@claude-hackathon/database": "*",
+    "@claude-hackathon/queue": "*",
+    "@claude-hackathon/shared": "*",
+    "@fastify/cors": "^8.5.0",
+    "@fastify/jwt": "^8.0.0",
+    "bcrypt": "^6.0.0",
+    "fastify": "^4.26.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/node": "^20.12.7",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.4.5"
+  }
+}
