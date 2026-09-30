@@ -1,66 +1,119 @@
-import { Activity, BrainCircuit } from 'lucide-react';
+"use client";
+
+import { useState, useEffect } from 'react';
+import { Clock, Activity, Loader2 } from 'lucide-react';
 
 export default function QueuePage() {
+  const [activeSessions, setActiveSessions] = useState<any[]>([]);
+  const [queuedSessions, setQueuedSessions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) {
+      window.location.href = '/users';
+      return;
+    }
+
+    const fetchQueue = async () => {
+      try {
+        const res = await fetch('http://localhost:3001/api/admin/queue', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await res.json();
+        if (data.queue) {
+          setActiveSessions(data.queue.activeSessions);
+          setQueuedSessions(data.queue.queuedSessions);
+        }
+      } catch (err) {
+        console.error("Failed to fetch queue", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchQueue();
+    const interval = setInterval(fetchQueue, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex h-[50vh] items-center justify-center">
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">Queue Monitor</h1>
-        <p className="text-muted-foreground mt-2">Real-time view of running agents and pending jobs.</p>
+        <h1 className="text-3xl font-bold tracking-tight text-white">Agent Queue</h1>
+        <p className="text-muted-foreground mt-2">Monitor active AI sessions and pending requests in real-time.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="glass-panel p-6">
+        {/* Active Agents */}
+        <div className="glass-panel p-6 bg-black/20">
           <div className="flex items-center gap-3 mb-6">
-            <div className="p-2 bg-green-500/20 rounded-lg">
-              <Activity className="w-5 h-5 text-green-500 dark:text-green-400" />
+            <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg">
+              <Activity className="w-5 h-5" />
             </div>
-            <h2 className="text-xl font-semibold text-foreground">Active Agents (4/5)</h2>
+            <h2 className="text-lg font-bold text-white">Currently Running ({activeSessions.length})</h2>
           </div>
           
-          <div className="space-y-4">
-            {[1,2,3,4].map(i => (
-              <div key={i} className="flex items-center justify-between p-4 rounded-xl border border-border bg-foreground/5 relative overflow-hidden group">
-                <div className="absolute inset-0 bg-gradient-to-r from-green-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                <div className="flex items-center gap-4 relative z-10">
-                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+          <div className="space-y-3">
+            {activeSessions.length === 0 ? (
+              <div className="p-8 text-center text-slate-500 bg-white/5 rounded-xl border border-white/5">
+                No agents are currently running.
+              </div>
+            ) : (
+              activeSessions.map((session, i) => (
+                <div key={session.id} className="p-4 rounded-xl bg-white/5 border border-emerald-500/20 hover:border-emerald-500/40 transition-colors flex items-center justify-between">
                   <div>
-                    <h4 className="font-medium text-foreground">Team Beta (Session #{i}04{i})</h4>
-                    <p className="text-xs text-muted-foreground mt-1">Started 4m ago</p>
+                    <div className="text-sm font-medium text-white">{session.user.email}</div>
+                    <div className="text-xs text-muted-foreground mt-1">Session: {session.id.split('-')[0]}...</div>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs font-medium text-emerald-400 bg-emerald-400/10 px-3 py-1.5 rounded-full">
+                    <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></div>
+                    Executing
                   </div>
                 </div>
-                <div className="relative z-10">
-                  <button className="text-xs text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 px-3 py-1.5 rounded-md hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-colors">
-                    Kill
-                  </button>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
 
-        <div className="glass-panel p-6">
+        {/* Queued Requests */}
+        <div className="glass-panel p-6 bg-black/20">
           <div className="flex items-center gap-3 mb-6">
-            <div className="p-2 bg-purple-500/20 rounded-lg">
-              <BrainCircuit className="w-5 h-5 text-purple-500 dark:text-purple-400" />
+            <div className="p-2 bg-purple-500/20 text-purple-400 rounded-lg">
+              <Clock className="w-5 h-5" />
             </div>
-            <h2 className="text-xl font-semibold text-foreground">Queued Jobs (12)</h2>
+            <h2 className="text-lg font-bold text-white">Pending Queue ({queuedSessions.length})</h2>
           </div>
           
-          <div className="space-y-4">
-            {[1,2,3,4,5].map(i => (
-              <div key={i} className="flex items-center justify-between p-4 rounded-xl border border-border bg-transparent group hover:bg-foreground/5 transition-colors">
-                <div className="flex items-center gap-4">
-                  <div className="text-muted-foreground font-mono text-sm">#{i}</div>
-                  <div>
-                    <h4 className="font-medium text-foreground">Team Delta</h4>
-                    <p className="text-xs text-muted-foreground mt-1">Waiting: {i}2m</p>
+          <div className="space-y-3">
+            {queuedSessions.length === 0 ? (
+              <div className="p-8 text-center text-slate-500 bg-white/5 rounded-xl border border-white/5">
+                The queue is completely empty.
+              </div>
+            ) : (
+              queuedSessions.map((session, i) => (
+                <div key={session.id} className="p-4 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 transition-colors flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="text-xl font-bold text-slate-500">#{i + 1}</div>
+                    <div>
+                      <div className="text-sm font-medium text-white">{session.user.email}</div>
+                      <div className="text-xs text-muted-foreground mt-1">Added: {new Date(session.createdAt).toLocaleTimeString()}</div>
+                    </div>
+                  </div>
+                  <div className="text-xs font-medium text-purple-400">
+                    Waiting...
                   </div>
                 </div>
-              </div>
-            ))}
-            <div className="text-center py-2 text-sm text-muted-foreground">
-              + 7 more in queue
-            </div>
+              ))
+            )}
           </div>
         </div>
       </div>

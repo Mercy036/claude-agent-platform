@@ -50,6 +50,38 @@ server.get('/api/auth/me', { preValidation: [(server as any).authenticate] }, as
 });
 
 // Admin Routes
+server.get('/api/admin/metrics', { preValidation: [(server as any).authenticate] }, async (request: any, reply) => {
+  if (request.user.role !== 'ADMIN') return reply.status(403).send({ error: 'Forbidden' });
+  
+  const totalUsers = await db.user.count({ where: { role: 'PARTICIPANT' } });
+  
+  // Aggregate total tokens burned across all users
+  const users = await db.user.findMany({ select: { tokensUsed: true } });
+  const totalTokens = users.reduce((acc, user) => acc + user.tokensUsed, 0);
+
+  const activeAgents = await db.agentSession.count({ where: { status: 'RUNNING' } });
+  const queuedJobs = await db.agentSession.count({ where: { status: 'QUEUED' } });
+
+  return { metrics: { totalUsers, totalTokens, activeAgents, queuedJobs } };
+});
+
+server.get('/api/admin/queue', { preValidation: [(server as any).authenticate] }, async (request: any, reply) => {
+  if (request.user.role !== 'ADMIN') return reply.status(403).send({ error: 'Forbidden' });
+
+  const activeSessions = await db.agentSession.findMany({
+    where: { status: 'RUNNING' },
+    include: { user: { select: { email: true, team: true } } },
+    orderBy: { startedAt: 'desc' }
+  });
+
+  const queuedSessions = await db.agentSession.findMany({
+    where: { status: 'QUEUED' },
+    include: { user: { select: { email: true, team: true } } },
+    orderBy: { createdAt: 'asc' }
+  });
+
+  return { queue: { activeSessions, queuedSessions } };
+});
 server.post('/api/admin/users', { preValidation: [(server as any).authenticate] }, async (request: any, reply) => {
   if (request.user.role !== 'ADMIN') {
     return reply.status(403).send({ error: 'Forbidden' });
@@ -99,6 +131,34 @@ server.get('/api/admin/users', { preValidation: [(server as any).authenticate] }
     select: { id: true, name: true, email: true, role: true, team: true, status: true, tokenLimit: true, tokensUsed: true }
   });
   return { users };
+});
+
+server.patch('/api/admin/users/:id', { preValidation: [(server as any).authenticate] }, async (request: any, reply) => {
+  if (request.user.role !== 'ADMIN') return reply.status(403).send({ error: 'Forbidden' });
+  
+  const { id } = request.params;
+  const schema = z.object({
+    team: z.string().optional(),
+    password: z.string().min(6).optional(),
+    tokenLimit: z.number().optional()
+  });
+
+  const parsed = schema.safeParse(request.body);
+  if (!parsed.success) return reply.status(400).send({ error: parsed.error });
+
+  const updateData: any = {};
+  if (parsed.data.team !== undefined) updateData.team = parsed.data.team;
+  if (parsed.data.tokenLimit !== undefined) updateData.tokenLimit = parsed.data.tokenLimit;
+  if (parsed.data.password) {
+    updateData.password = await bcrypt.hash(parsed.data.password, 10);
+  }
+
+  await db.user.update({
+    where: { id },
+    data: updateData
+  });
+
+  return { success: true };
 });
 
 // Agent Routes
