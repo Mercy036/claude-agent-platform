@@ -30,8 +30,8 @@ function loadConfig() {
 }
 
 program
-  .name('hackathon-luna')
-  .description('CLI to interact with the GPT-6 Luna Hackathon agent')
+  .name('hackathon-claude')
+  .description('CLI to interact with the Claude Haiku Hackathon agent')
   .version('1.0.0');
 
 program
@@ -68,7 +68,7 @@ program
   .action(async () => {
     const config = loadConfig();
     if (!config?.token) {
-      console.error(chalk.red('Not logged in. Run: hackathon-luna login'));
+      console.error(chalk.red('Not logged in. Run: hackathon-claude login'));
       return;
     }
 
@@ -89,7 +89,7 @@ program
   .action(async () => {
     const config = loadConfig();
     if (!config?.token) {
-      console.error(chalk.red('Not logged in. Run: hackathon-luna login'));
+      console.error(chalk.red('Not logged in. Run: hackathon-claude login'));
       return;
     }
 
@@ -100,12 +100,12 @@ program
       });
       const user = meResponse.data.user;
       
-      console.log(chalk.bold('GPT-6 Luna Hackathon'));
+      console.log(chalk.bold('Claude Haiku Hackathon'));
       console.log(`Logged in as: ${chalk.blue(user.email)}`);
       console.log(chalk.blue(`Usage: ${user.tokensUsed.toLocaleString()} / ${user.tokenLimit.toLocaleString()} tokens\n`));
       
       const { task } = await inquirer.prompt([
-        { type: 'input', name: 'task', message: 'What would you like GPT-6 Luna to do?' }
+        { type: 'input', name: 'task', message: 'What would you like Claude Haiku to do?' }
       ]);
       
       console.log(chalk.yellow('\nStarting agent...'));
@@ -209,3 +209,5 @@ program
   });
 
 program.parse(process.argv);
+
+

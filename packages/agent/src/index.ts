@@ -2,12 +2,12 @@ import * as dotenv from 'dotenv';
 import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 import { db } from '@claude-hackathon/database';
-import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 
-const MODEL = 'gpt-6-luna';
+const MODEL = 'claude-haiku-4-5';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
 export const runAgent = async (
@@ -15,67 +15,63 @@ export const runAgent = async (
   task: string,
   onEvent: (event: string, data: any) => void
 ) => {
-  onEvent('LOG', { message: 'Agent initialized. Connecting to OpenAI...' });
+  onEvent('LOG', { message: 'Agent initialized. Connecting to Claude...' });
   onEvent('LOG', { message: `Task received: ${task}` });
 
   try {
     const session = await db.agentSession.findUnique({ where: { id: sessionId }, include: { user: true } });
     if (!session) throw new Error('Session not found');
 
-    const stream = await openai.chat.completions.create({
+    let fullContent = '';
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    const stream = await anthropic.messages.stream({
       model: MODEL,
-      stream: true,
-      stream_options: { include_usage: true },
-      reasoning_effort: 'medium',
-      max_completion_tokens: 4096,
-      messages: [
-        {
-          role: 'system',
-          content: `You are a world-class coding AI assistant running directly in the user's terminal via a Hackathon Platform. 
+      max_tokens: 4096,
+      system: `You are a world-class coding AI assistant running directly in the user's terminal via a Hackathon Platform.
 Your goal is to help them build their hackathon project.
 If you need to create or modify a file on their computer, you MUST wrap the exact file contents in this exact syntax so the CLI can execute it:
 <<<FILE: relative/path/to/file.ts>>>
 // exact file content here
 <<<ENDFILE>>>
 You can create multiple files in a single response by using this syntax multiple times. Always write complete files.
-Explain what you are doing clearly before writing the file.`
-        },
+Explain what you are doing clearly before writing the file.`,
+      messages: [
         { role: 'user', content: task }
       ],
     });
 
-    let fullContent = '';
-    let currentInputTokens = 0;
-    let currentOutputTokens = 0;
-
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta?.content;
-      if (delta) {
+    for await (const event of stream) {
+      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+        const delta = event.delta.text;
         fullContent += delta;
-        // Stream the raw delta down to the CLI immediately
         onEvent('DELTA', { text: delta });
       }
-      // Capture usage from the final chunk
-      if (chunk.usage) {
-        currentInputTokens = chunk.usage.prompt_tokens;
-        currentOutputTokens = chunk.usage.completion_tokens;
+
+      if (event.type === 'message_delta' && event.usage) {
+        outputTokens = event.usage.output_tokens;
+      }
+
+      if (event.type === 'message_start' && event.message.usage) {
+        inputTokens = event.message.usage.input_tokens;
       }
     }
 
     onEvent('LOG', { message: `\nFinished generating code.` });
 
-    // Track real token usage in the database
-    const totalTokens = currentInputTokens + currentOutputTokens;
+    const totalTokens = inputTokens + outputTokens;
+
     await db.tokenUsage.create({
       data: {
         userId: session.userId,
         sessionId,
         requestId: `req_${Date.now()}`,
-        inputTokens: currentInputTokens,
-        outputTokens: currentOutputTokens,
+        inputTokens,
+        outputTokens,
         cacheReadTokens: 0,
         cacheCreationTokens: 0,
-        totalTokens: totalTokens,
+        totalTokens,
         model: MODEL,
       }
     });
@@ -87,7 +83,7 @@ Explain what you are doing clearly before writing the file.`
 
     onEvent('COMPLETED', { success: true });
   } catch (error: any) {
-    onEvent('LOG', { message: `Error from OpenAI: ${error.message}` });
+    onEvent('LOG', { message: `Error from Claude: ${error.message}` });
     throw error;
   }
 };

@@ -46,7 +46,7 @@ const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
 const program = new commander_1.Command();
 const API_URL = process.env.HACKATHON_API_URL || 'http://localhost:3001';
-const CONFIG_DIR = path_1.default.join(os_1.default.homedir(), '.hackathon-claude');
+const CONFIG_DIR = path_1.default.join(os_1.default.homedir(), '.hackathon-luna');
 const CONFIG_FILE = path_1.default.join(CONFIG_DIR, 'config.json');
 function saveConfig(config) {
     if (!fs_1.default.existsSync(CONFIG_DIR)) {
@@ -62,7 +62,7 @@ function loadConfig() {
 }
 program
     .name('hackathon-claude')
-    .description('CLI to interact with the Claude Hackathon agent')
+    .description('CLI to interact with the Claude Haiku Hackathon agent')
     .version('1.0.0');
 program
     .command('login')
@@ -125,11 +125,11 @@ program
             headers: { Authorization: `Bearer ${config.token}` }
         });
         const user = meResponse.data.user;
-        console.log(chalk_1.default.bold('Claude Hackathon'));
+        console.log(chalk_1.default.bold('Claude Haiku Hackathon'));
         console.log(`Logged in as: ${chalk_1.default.blue(user.email)}`);
         console.log(chalk_1.default.blue(`Usage: ${user.tokensUsed.toLocaleString()} / ${user.tokenLimit.toLocaleString()} tokens\n`));
         const { task } = await inquirer_1.default.prompt([
-            { type: 'input', name: 'task', message: 'What would you like Claude to do?' }
+            { type: 'input', name: 'task', message: 'What would you like Claude Haiku to do?' }
         ]);
         console.log(chalk_1.default.yellow('\nStarting agent...'));
         // Single request: POST returns SSE stream directly

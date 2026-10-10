@@ -1,13 +1,14 @@
 {
   "name": "@claude-hackathon/agent",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "src/index.ts",
   "scripts": {
     "build": "tsc"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.56.0",
     "@claude-hackathon/database": "*",
-    "openai": "^7.28.0"
+    "dotenv": "^16.6.1"
   },
   "devDependencies": {
     "typescript": "^5.4.5"
