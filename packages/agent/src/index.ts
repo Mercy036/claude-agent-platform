@@ -1,9 +1,13 @@
+import * as dotenv from 'dotenv';
+import path from 'path';
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 import { db } from '@claude-hackathon/database';
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 
-// Initialize SDK (using a dummy key if not provided)
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY || 'dummy_key',
+const MODEL = 'gpt-6-luna';
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 export const runAgent = async (
@@ -11,52 +15,79 @@ export const runAgent = async (
   task: string,
   onEvent: (event: string, data: any) => void
 ) => {
-  onEvent('LOG', { message: 'Agent initialized...' });
+  onEvent('LOG', { message: 'Agent initialized. Connecting to OpenAI...' });
   onEvent('LOG', { message: `Task received: ${task}` });
 
-  // Mocking the agent work loop
-  const steps = [
-    'Inspecting project environment...',
-    'Reading package.json...',
-    'Creating required files...',
-    'Running tests...',
-    'Fixing lint errors...',
-  ];
+  try {
+    const session = await db.agentSession.findUnique({ where: { id: sessionId }, include: { user: true } });
+    if (!session) throw new Error('Session not found');
 
-  for (const step of steps) {
-    onEvent('LOG', { message: step });
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-  }
+    const stream = await openai.chat.completions.create({
+      model: MODEL,
+      stream: true,
+      stream_options: { include_usage: true },
+      reasoning_effort: 'medium',
+      max_completion_tokens: 4096,
+      messages: [
+        {
+          role: 'system',
+          content: `You are a world-class coding AI assistant running directly in the user's terminal via a Hackathon Platform. 
+Your goal is to help them build their hackathon project.
+If you need to create or modify a file on their computer, you MUST wrap the exact file contents in this exact syntax so the CLI can execute it:
+<<<FILE: relative/path/to/file.ts>>>
+// exact file content here
+<<<ENDFILE>>>
+You can create multiple files in a single response by using this syntax multiple times. Always write complete files.
+Explain what you are doing clearly before writing the file.`
+        },
+        { role: 'user', content: task }
+      ],
+    });
 
-  // Record mock token usage
-  const session = await db.agentSession.findUnique({ where: { id: sessionId } });
-  if (session) {
-    const inputTokens = Math.floor(Math.random() * 500) + 100;
-    const outputTokens = Math.floor(Math.random() * 800) + 200;
-    
+    let fullContent = '';
+    let currentInputTokens = 0;
+    let currentOutputTokens = 0;
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content;
+      if (delta) {
+        fullContent += delta;
+        // Stream the raw delta down to the CLI immediately
+        onEvent('DELTA', { text: delta });
+      }
+      // Capture usage from the final chunk
+      if (chunk.usage) {
+        currentInputTokens = chunk.usage.prompt_tokens;
+        currentOutputTokens = chunk.usage.completion_tokens;
+      }
+    }
+
+    onEvent('LOG', { message: `\nFinished generating code.` });
+
+    // Track real token usage in the database
+    const totalTokens = currentInputTokens + currentOutputTokens;
     await db.tokenUsage.create({
       data: {
         userId: session.userId,
         sessionId,
         requestId: `req_${Date.now()}`,
-        inputTokens,
-        outputTokens,
+        inputTokens: currentInputTokens,
+        outputTokens: currentOutputTokens,
         cacheReadTokens: 0,
         cacheCreationTokens: 0,
-        totalTokens: inputTokens + outputTokens,
-        model: 'claude-3-haiku-20240307',
+        totalTokens: totalTokens,
+        model: MODEL,
       }
     });
 
     await db.user.update({
       where: { id: session.userId },
-      data: {
-        tokensUsed: { increment: inputTokens + outputTokens }
-      }
+      data: { tokensUsed: { increment: totalTokens } }
     });
 
-    onEvent('LOG', { message: `Task complete. Tokens used: ${inputTokens + outputTokens}` });
+    onEvent('COMPLETED', { success: true });
+  } catch (error: any) {
+    onEvent('LOG', { message: `Error from OpenAI: ${error.message}` });
+    throw error;
   }
-
-  onEvent('COMPLETED', { success: true });
 };

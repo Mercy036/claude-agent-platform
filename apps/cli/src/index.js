@@ -1,5 +1,38 @@
 #!/usr/bin/env node
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -8,7 +41,6 @@ const commander_1 = require("commander");
 const inquirer_1 = __importDefault(require("inquirer"));
 const chalk_1 = __importDefault(require("chalk"));
 const axios_1 = __importDefault(require("axios"));
-const eventsource_1 = __importDefault(require("eventsource"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
@@ -100,42 +132,91 @@ program
             { type: 'input', name: 'task', message: 'What would you like Claude to do?' }
         ]);
         console.log(chalk_1.default.yellow('\nStarting agent...'));
-        const sessionResponse = await axios_1.default.post(`${API_URL}/api/agent/session`, { task, cwd: process.cwd() }, { headers: { Authorization: `Bearer ${config.token}` } });
-        const sessionId = sessionResponse.data.sessionId;
-        const es = new eventsource_1.default(`${API_URL}/api/agent/stream/${sessionId}`, {
-            headers: { Authorization: `Bearer ${config.token}` }
-        });
-        es.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if (data.event === 'LOG') {
-                console.log(chalk_1.default.cyan(`[Agent] ${data.data.message}`));
+        // Single request: POST returns SSE stream directly
+        const https = await Promise.resolve().then(() => __importStar(require('https')));
+        const http = await Promise.resolve().then(() => __importStar(require('http')));
+        const url = new URL(`${API_URL}/api/agent/run`);
+        const body = JSON.stringify({ task, cwd: process.cwd() });
+        const options = {
+            hostname: url.hostname,
+            port: url.port || (url.protocol === 'https:' ? 443 : 80),
+            path: url.pathname,
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${config.token}`,
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body),
+                'Accept': 'text/event-stream',
             }
-            else if (data.event === 'COMPLETED') {
-                console.log(chalk_1.default.green('\n✓ Task completed successfully.'));
-                es.close();
-                process.exit(0);
-            }
-            else if (data.event === 'FAILED') {
-                console.error(chalk_1.default.red(`\n✗ Task failed: ${data.data.error}`));
-                es.close();
+        };
+        let agentResponse = '';
+        const transport = url.protocol === 'https:' ? https : http;
+        const req = transport.request(options, (res) => {
+            let buffer = '';
+            res.setEncoding('utf8');
+            res.on('data', (chunk) => {
+                buffer += chunk;
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop() ?? '';
+                for (const part of parts) {
+                    const line = part.trim();
+                    if (!line || line.startsWith(':'))
+                        continue; // skip keepalives
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const parsed = JSON.parse(line.slice(6));
+                            const { event, data } = parsed;
+                            if (event === 'LOG') {
+                                console.log(chalk_1.default.cyan(`\n[Agent] ${data.message}`));
+                            }
+                            else if (event === 'DELTA') {
+                                process.stdout.write(chalk_1.default.white(data.text));
+                                agentResponse += data.text;
+                            }
+                            else if (event === 'COMPLETED') {
+                                console.log(chalk_1.default.green('\n\n✓ Task completed successfully.'));
+                                const fileRegex = /<<<FILE:\s*(.+?)>>>\n([\s\S]*?)<<<ENDFILE>>>/g;
+                                let match;
+                                let filesCreated = 0;
+                                while ((match = fileRegex.exec(agentResponse)) !== null) {
+                                    const filePath = path_1.default.join(process.cwd(), match[1].trim());
+                                    const fileContent = match[2];
+                                    const dir = path_1.default.dirname(filePath);
+                                    if (!fs_1.default.existsSync(dir))
+                                        fs_1.default.mkdirSync(dir, { recursive: true });
+                                    fs_1.default.writeFileSync(filePath, fileContent.trim() + '\n');
+                                    console.log(chalk_1.default.green(`✓ Wrote file: ${match[1].trim()}`));
+                                    filesCreated++;
+                                }
+                                if (filesCreated > 0) {
+                                    console.log(chalk_1.default.blue(`\nSuccessfully created/modified ${filesCreated} files!`));
+                                }
+                                process.exit(0);
+                            }
+                            else if (event === 'FAILED') {
+                                console.error(chalk_1.default.red(`\n✗ Task failed: ${data.error}`));
+                                process.exit(1);
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            });
+            res.on('end', () => process.exit(0));
+            res.on('error', (e) => {
+                console.error(chalk_1.default.red('Stream error: ' + e.message));
                 process.exit(1);
-            }
-            else if (data.event === 'CANCELLED') {
-                console.log(chalk_1.default.yellow('\nTask was cancelled.'));
-                es.close();
-                process.exit(0);
-            }
-        };
-        es.onerror = (err) => {
-            console.error(chalk_1.default.red('Connection to agent lost.'));
-            es.close();
+            });
+        });
+        req.on('error', (e) => {
+            console.error(chalk_1.default.red('Connection error: ' + e.message));
             process.exit(1);
-        };
-        // Handle graceful exit
+        });
+        req.write(body);
+        req.end();
         process.on('SIGINT', () => {
-            console.log(chalk_1.default.yellow('\nCancelling task...'));
-            // In a real implementation, we would send a DELETE/CANCEL request to the backend
-            es.close();
+            console.log(chalk_1.default.yellow('\nCancelling...'));
+            req.destroy();
             process.exit(0);
         });
     }
@@ -144,4 +225,3 @@ program
     }
 });
 program.parse(process.argv);
-//# sourceMappingURL=index.js.map

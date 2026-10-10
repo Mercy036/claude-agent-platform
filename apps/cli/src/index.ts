@@ -12,7 +12,7 @@ import os from 'os';
 const program = new Command();
 const API_URL = process.env.HACKATHON_API_URL || 'http://localhost:3001';
 
-const CONFIG_DIR = path.join(os.homedir(), '.hackathon-claude');
+const CONFIG_DIR = path.join(os.homedir(), '.hackathon-luna');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 function saveConfig(config: any) {
@@ -30,8 +30,8 @@ function loadConfig() {
 }
 
 program
-  .name('hackathon-claude')
-  .description('CLI to interact with the Claude Hackathon agent')
+  .name('hackathon-luna')
+  .description('CLI to interact with the GPT-6 Luna Hackathon agent')
   .version('1.0.0');
 
 program
@@ -68,7 +68,7 @@ program
   .action(async () => {
     const config = loadConfig();
     if (!config?.token) {
-      console.error(chalk.red('Not logged in. Run: hackathon-claude login'));
+      console.error(chalk.red('Not logged in. Run: hackathon-luna login'));
       return;
     }
 
@@ -89,7 +89,7 @@ program
   .action(async () => {
     const config = loadConfig();
     if (!config?.token) {
-      console.error(chalk.red('Not logged in. Run: hackathon-claude login'));
+      console.error(chalk.red('Not logged in. Run: hackathon-luna login'));
       return;
     }
 
@@ -100,57 +100,106 @@ program
       });
       const user = meResponse.data.user;
       
-      console.log(chalk.bold('Claude Hackathon'));
+      console.log(chalk.bold('GPT-6 Luna Hackathon'));
       console.log(`Logged in as: ${chalk.blue(user.email)}`);
       console.log(chalk.blue(`Usage: ${user.tokensUsed.toLocaleString()} / ${user.tokenLimit.toLocaleString()} tokens\n`));
       
       const { task } = await inquirer.prompt([
-        { type: 'input', name: 'task', message: 'What would you like Claude to do?' }
+        { type: 'input', name: 'task', message: 'What would you like GPT-6 Luna to do?' }
       ]);
       
       console.log(chalk.yellow('\nStarting agent...'));
 
-      const sessionResponse = await axios.post(`${API_URL}/api/agent/session`, 
-        { task, cwd: process.cwd() },
-        { headers: { Authorization: `Bearer ${config.token}` } }
-      );
+      // Single request: POST returns SSE stream directly
+      const https = await import('https');
+      const http = await import('http');
+      const url = new URL(`${API_URL}/api/agent/run`);
+      const body = JSON.stringify({ task, cwd: process.cwd() });
 
-      const sessionId = sessionResponse.data.sessionId;
-
-      const es = new EventSource(`${API_URL}/api/agent/stream/${sessionId}`, {
-        headers: { Authorization: `Bearer ${config.token}` }
-      });
-
-      es.onmessage = (event: MessageEvent) => {
-        const data = JSON.parse(event.data);
-        if (data.event === 'LOG') {
-          console.log(chalk.cyan(`[Agent] ${data.data.message}`));
-        } else if (data.event === 'COMPLETED') {
-          console.log(chalk.green('\n✓ Task completed successfully.'));
-          es.close();
-          process.exit(0);
-        } else if (data.event === 'FAILED') {
-          console.error(chalk.red(`\n✗ Task failed: ${data.data.error}`));
-          es.close();
-          process.exit(1);
-        } else if (data.event === 'CANCELLED') {
-          console.log(chalk.yellow('\nTask was cancelled.'));
-          es.close();
-          process.exit(0);
+      const options = {
+        hostname: url.hostname,
+        port: url.port || (url.protocol === 'https:' ? 443 : 80),
+        path: url.pathname,
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${config.token}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'Accept': 'text/event-stream',
         }
       };
 
-      es.onerror = (err: Event) => {
-        console.error(chalk.red('Connection to agent lost.'));
-        es.close();
-        process.exit(1);
-      };
+      let agentResponse = '';
 
-      // Handle graceful exit
+      const transport = url.protocol === 'https:' ? https : http;
+      const req = (transport as any).request(options, (res: any) => {
+        let buffer = '';
+        res.setEncoding('utf8');
+
+        res.on('data', (chunk: string) => {
+          buffer += chunk;
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() ?? '';
+
+          for (const part of parts) {
+            const line = part.trim();
+            if (!line || line.startsWith(':')) continue; // skip keepalives
+            if (line.startsWith('data: ')) {
+              try {
+                const parsed = JSON.parse(line.slice(6));
+                const { event, data } = parsed;
+
+                if (event === 'LOG') {
+                  console.log(chalk.cyan(`\n[Agent] ${data.message}`));
+                } else if (event === 'DELTA') {
+                  process.stdout.write(chalk.white(data.text));
+                  agentResponse += data.text;
+                } else if (event === 'COMPLETED') {
+                  console.log(chalk.green('\n\n✓ Task completed successfully.'));
+
+                  const fileRegex = /<<<FILE:\s*(.+?)>>>\n([\s\S]*?)<<<ENDFILE>>>/g;
+                  let match;
+                  let filesCreated = 0;
+                  while ((match = fileRegex.exec(agentResponse)) !== null) {
+                    const filePath = path.join(process.cwd(), match[1].trim());
+                    const fileContent = match[2];
+                    const dir = path.dirname(filePath);
+                    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                    fs.writeFileSync(filePath, fileContent.trim() + '\n');
+                    console.log(chalk.green(`✓ Wrote file: ${match[1].trim()}`));
+                    filesCreated++;
+                  }
+                  if (filesCreated > 0) {
+                    console.log(chalk.blue(`\nSuccessfully created/modified ${filesCreated} files!`));
+                  }
+                  process.exit(0);
+                } else if (event === 'FAILED') {
+                  console.error(chalk.red(`\n✗ Task failed: ${data.error}`));
+                  process.exit(1);
+                }
+              } catch {}
+            }
+          }
+        });
+
+        res.on('end', () => process.exit(0));
+        res.on('error', (e: Error) => {
+          console.error(chalk.red('Stream error: ' + e.message));
+          process.exit(1);
+        });
+      });
+
+      req.on('error', (e: Error) => {
+        console.error(chalk.red('Connection error: ' + e.message));
+        process.exit(1);
+      });
+
+      req.write(body);
+      req.end();
+
       process.on('SIGINT', () => {
-        console.log(chalk.yellow('\nCancelling task...'));
-        // In a real implementation, we would send a DELETE/CANCEL request to the backend
-        es.close();
+        console.log(chalk.yellow('\nCancelling...'));
+        req.destroy();
         process.exit(0);
       });
 

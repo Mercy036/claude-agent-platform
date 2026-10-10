@@ -1,8 +1,8 @@
 {
-  "name": "@mercy036/hackathon-claude",
-  "version": "1.0.2",
+  "name": "@mercy036/hackathon-luna",
+  "version": "1.0.7",
   "bin": {
-    "hackathon-claude": "./src/index.js"
+    "hackathon-luna": "./src/index.js"
   },
   "scripts": {
     "dev": "ts-node src/index.ts",

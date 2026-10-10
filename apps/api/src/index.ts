@@ -1,3 +1,6 @@
+import * as dotenv from 'dotenv';
+import path from 'path';
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 import fastify from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
@@ -6,8 +9,8 @@ import { db } from '@claude-hackathon/database';
 import { agentQueue } from '@claude-hackathon/queue';
 import { z } from 'zod';
 import { startQueueProcessor } from './queueProcessor';
-import { redisSubscriber } from './pubsub';
-import { PassThrough } from 'stream';
+import { runAgent } from '@claude-hackathon/agent';
+
 
 const server = fastify({ logger: true });
 
@@ -161,8 +164,8 @@ server.patch('/api/admin/users/:id', { preValidation: [(server as any).authentic
   return { success: true };
 });
 
-// Agent Routes
-server.post('/api/agent/session', { preValidation: [(server as any).authenticate] }, async (request: any, reply) => {
+// Agent Routes — agent runs directly in the SSE handler (no Redis pub/sub)
+server.post('/api/agent/run', { preValidation: [(server as any).authenticate] }, async (request: any, reply) => {
   const schema = z.object({ task: z.string(), cwd: z.string() });
   const parsed = schema.safeParse(request.body);
   if (!parsed.success) return reply.status(400).send({ error: 'Invalid input' });
@@ -173,29 +176,11 @@ server.post('/api/agent/session', { preValidation: [(server as any).authenticate
   }
 
   const session = await db.agentSession.create({
-    data: { userId: user.id, status: 'QUEUED' }
-  });
-  
-  await agentQueue.add('agent-task', {
-    sessionId: session.id,
-    userId: user.id,
-    task: parsed.data.task,
-    cwd: parsed.data.cwd
+    data: { userId: user.id, status: 'RUNNING', startedAt: new Date() }
   });
 
-  return { sessionId: session.id };
-});
-
-server.get('/api/agent/stream/:sessionId', { preValidation: [(server as any).authenticate] }, async (request: any, reply) => {
-  const { sessionId } = request.params;
-  
-  // Verify ownership
-  const session = await db.agentSession.findUnique({ where: { id: sessionId } });
-  if (!session || (session.userId !== request.user.id && request.user.role !== 'ADMIN')) {
-    return reply.status(403).send({ error: 'Forbidden' });
-  }
-
-  const stream = new PassThrough();
+  // Take full control of the raw socket — stream SSE directly
+  reply.hijack();
   reply.raw.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -203,35 +188,32 @@ server.get('/api/agent/stream/:sessionId', { preValidation: [(server as any).aut
     'Access-Control-Allow-Origin': '*'
   });
 
-  const channel = `session:${sessionId}`;
-  
-  const messageHandler = (ch: string, message: string) => {
-    if (ch === channel) {
-      reply.raw.write(`data: ${message}\n\n`);
-      const { event } = JSON.parse(message);
-      if (event === 'COMPLETED' || event === 'FAILED' || event === 'CANCELLED') {
-        reply.raw.end();
-      }
-    }
+  const send = (event: string, data: any) => {
+    reply.raw.write(`data: ${JSON.stringify({ event, data })}\n\n`);
   };
 
-  redisSubscriber.subscribe(channel);
-  redisSubscriber.on('message', messageHandler);
-
-  request.raw.on('close', () => {
-    redisSubscriber.unsubscribe(channel);
-    redisSubscriber.removeListener('message', messageHandler);
-  });
-
-  // Keep connection alive
-  const interval = setInterval(() => {
-    reply.raw.write(': keepalive\n\n');
-  }, 15000);
-  
-  request.raw.on('close', () => clearInterval(interval));
-
-  return reply.send(stream);
+  try {
+    await runAgent(session.id, parsed.data.task, send);
+    await db.agentSession.update({
+      where: { id: session.id },
+      data: { status: 'COMPLETED', endedAt: new Date() }
+    });
+  } catch (err: any) {
+    send('FAILED', { error: err.message || 'Internal error' });
+    await db.agentSession.update({
+      where: { id: session.id },
+      data: { status: 'FAILED', endedAt: new Date() }
+    });
+  } finally {
+    reply.raw.end();
+  }
 });
+
+// Keep old session endpoint for backwards compat (returns a dummy sessionId)
+server.post('/api/agent/session', { preValidation: [(server as any).authenticate] }, async (request: any, reply) => {
+  return reply.status(410).send({ error: 'Use POST /api/agent/run instead' });
+});
+
 
 const start = async () => {
   try {

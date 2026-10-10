@@ -8,6 +8,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.20.9",
     "@claude-hackathon/agent": "*",
     "@claude-hackathon/database": "*",
     "@claude-hackathon/queue": "*",
@@ -15,6 +16,7 @@
     "@fastify/cors": "^8.5.0",
     "@fastify/jwt": "^8.0.0",
     "bcrypt": "^6.0.0",
+    "dotenv": "^18.0.5",
     "fastify": "^4.26.2",
     "zod": "^3.23.8"
   },

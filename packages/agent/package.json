@@ -6,8 +6,8 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.20.1",
-    "@claude-hackathon/database": "*"
+    "@claude-hackathon/database": "*",
+    "openai": "^7.28.0"
   },
   "devDependencies": {
     "typescript": "^5.4.5"
