@@ -1,98 +1,107 @@
-# GPT-6 Luna Hackathon Platform 🚀
+# Claude Hackathon Platform
 
-A comprehensive, massively scalable platform to provide autonomous GPT-6 Luna agents to hackathon students while enforcing strict token limits, team isolation, and queue management.
+A TypeScript workspace with a Next.js organizer dashboard, a Fastify API, a BullMQ worker, PostgreSQL quota accounting, and a terminal coding assistant. The implemented provider is **Anthropic Claude**, configured through `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL`.
 
-## 🏗️ Architecture
+## Development
 
-This is a modern NPM workspace monorepo divided into three main components:
+Requires Node.js 20.9+ and PostgreSQL 15+ / Redis 7+ (Docker Compose can run the services).
 
-1. **`apps/admin` (Next.js)** - The beautiful Glassmorphism dashboard for hackathon organizers. Features live metrics, queue monitoring, and participant management.
-2. **`apps/api` (Fastify + BullMQ + Redis)** - The backend engine. This runs persistent SSE (Server-Sent Events) connections to stream GPT-6 Luna outputs to student terminals, processes heavy jobs via BullMQ, and tracks token limits via Postgres.
-3. **`apps/cli` (Node CLI)** - The `npx` tool students use. It creates an isolated "knowledge base" solely out of their local project directory and connects back to the API.
-
----
-
-## 🧠 How it Works (The Flow)
-
-If you are a student using the CLI, here is the exact lifecycle of what happens under the hood when you ask GPT-6 Luna to write code:
-
-1. **The Request:** The student types a prompt into their terminal (`npx @mercy036/hackathon-luna`). The CLI wraps this prompt and their current directory path, attaches their authentication JWT, and sends a standard HTTP POST request to the API.
-2. **Token Check:** The Fastify API intercepts the request, checks the PostgreSQL database to ensure the student's team hasn't exceeded their 1,000,000 token limit, and accepts the request.
-3. **The Queue:** Instead of processing it instantly (which would crash the server if 600 students ask at once), the API pushes the request into a **BullMQ Redis Queue**. This ensures that the server processes requests reliably and sequentially without running out of RAM.
-4. **The Live Stream (SSE):** While the request sits in the queue, the student's CLI immediately opens a **Server-Sent Events (SSE)** connection to the API. This is a lightweight, one-way open pipe that allows the server to stream text and commands back to the terminal in real-time.
-5. **The Agent Worker:** The BullMQ Worker picks up the job from the queue. It takes the student's prompt and securely calls the **OpenAI GPT-6 Luna API**.
-6. **Execution & Streaming:** As GPT-6 Luna thinks and generates code, the Worker publishes the text via Redis PubSub, which instantly streams down the open SSE pipe to the student's terminal.
-7. **File Modifications:** (Once fully integrated) If GPT-6 Luna determines a file needs to be created or edited, the server streams a `TOOL_CALL` command down the SSE pipe. The CLI intercepts this command and executes it locally on the student's hard drive, keeping their code completely private and secure!
-
----
-
-## 👥 Student Experience
-
-Students do not need to clone this repository. To use the agent, they simply open their terminal in their project folder and run:
-
-```bash
-# 1. Login with the credentials provided by the admin
-npx @mercy036/hackathon-luna@latest login
-
-# 2. Start the AI Agent in that folder
-npx @mercy036/hackathon-luna@latest
+```sh
+npm ci
+docker compose up -d
 ```
 
----
+Copy `.env.example` to `.env`. Set your Anthropic key, a unique JWT secret, and `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Generate a signing secret with:
 
-## 🛠️ Local Development
+```sh
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+npm run db:generate
+npm run db:migrate
+npm run db:seed
+npm run dev
+```
 
-### Prerequisites
-- Node.js installed
-- Docker & Docker Compose installed (for Postgres and Redis)
+The dashboard runs on port 3000; the API defaults to port 3001. Seeding sets the specified admin password and revokes its previous tokens. There are no default credentials. Existing plaintext participant passwords must be reset through the admin API/dashboard; plaintext login is not supported.
 
-### Setup
-1. Install dependencies:
-   ```sh
-   npm install
-   ```
+For the dashboard, set `NEXT_PUBLIC_API_URL` in **`apps/admin/.env.local`** or its hosting environment before building. Next.js embeds this public URL at build time; it does not read the repository's root `.env` for the dashboard. Configure `CORS_ORIGINS` on the API with comma-separated trusted dashboard origins.
 
-2. Start the local databases:
-   ```sh
-   docker-compose up -d
-   ```
+### Upgrading an existing database
 
-3. Initialize the database schema:
-   ```sh
-   npm run db:generate
-   npm run db:push
-   ```
+Back up the database and stop the old API/workers first. If the original schema was created using `db:push`, baseline it once before applying the new migration:
 
-4. Set your OpenAI API key in `.env`:
-   ```sh
-   OPENAI_API_KEY="sk-..."
-   ```
+```sh
+npm run db:baseline
+npm run db:migrate
+npm run db:seed
+```
 
-5. Start all servers (Dashboard & API):
-   ```sh
-   npm run dev
-   ```
+Only baseline a database that already matches the original schema. Fresh databases should run `db:migrate` without `migrate resolve`. The upgrade backfills historical session usage and ends old unfinished sessions that lack durable request data. Keep the existing `JWT_SECRET` only if it is a strong, unique secret; otherwise replace it to revoke old authentication.
 
-Your admin dashboard will be live at `http://localhost:3000`.
-**Default Admin Credentials:** `admin@claude-hackathon.com` / `admin-password`
+## Participant CLI
 
----
+Build locally, then run the CLI from the participant's project directory:
 
-## ☁️ Deployment Guide
+```sh
+npm run build:core
+node /absolute/path/to/claude-agent-platform/apps/cli/dist/index.js login
+node /absolute/path/to/claude-agent-platform/apps/cli/dist/index.js
+```
 
-Because the API relies on persistent WebSockets/SSE and heavy background queue processing, the API must be deployed to a stateful server (like Render, Railway, or a VPS).
+After publishing the updated CLI package, participants can use:
 
-### 1. Deploy the Engine (`apps/api`)
-- Connect this GitHub repository to Railway.app or Render.
-- Attach a cloud PostgreSQL and Redis database from their dashboard.
-- Run `npm install` and `npm run dev --workspace=@claude-hackathon/api` as the start command.
-- Set your `DATABASE_URL`, `REDIS_URL`, and `OPENAI_API_KEY` in the environment variables.
-- You will get a public URL (e.g. `luna-api.up.railway.app`).
+```sh
+npx @mercy036/hackathon-claude@latest login
+npx @mercy036/hackathon-claude@latest
+```
 
-### 2. Update the CLI
-- Inside `apps/cli/src/index.ts`, change the `API_URL` variable to your new public URL from step 1.
-- Run `npm publish --access public` inside `apps/cli` to push the update to NPM.
+Set `HACKATHON_API_URL` to your API address. Remote endpoints require HTTPS. Saved credentials are bound to that API address; changing it requires a new login. The CLI is bundled so it can be published without publishing the internal workspace packages.
 
-### 3. Deploy the Dashboard (`apps/admin`)
-- Connect the repository to Vercel and deploy the `apps/admin` folder.
-- Set the `NEXT_PUBLIC_API_URL` environment variable if needed.
+The CLI asks which files may be shared with the server and Anthropic. Nothing is selected automatically. It accepts at most 32 UTF-8 text files, 32 KiB per file and 128 KiB total. Hidden configuration, credentials such as `.env`, dependencies, symbolic links and hardlinks are excluded. Review the selected files for secrets before sharing them. Requests are isolated by authenticated user; selected context is stored in PostgreSQL until settlement and then removed. Generated output is retained in Redis for up to one hour for streaming.
+
+Generated edits are displayed before an explicit apply prompt. The CLI rejects paths outside the project, unsafe Windows paths, duplicate edits, overwrites of unshared files, and files changed locally since submission. It stages edits, preserves their whitespace, saves original files beside each edited file as `*.hackathon-backup-<id>`, and rolls back replacements if applying a later file fails. Backups and temporary files are ignored by Git. Run the CLI in a project directory whose contents you control; filesystem checks cannot protect against another local process deliberately racing directory replacement.
+
+## Execution and quotas
+
+1. Authentication requires a configured signing secret, bcrypt passwords and an active account. Tokens expire after eight hours. Password changes and account status changes revoke existing tokens; admin permissions come from the current database record.
+2. The API validates the task and selected files and reserves a conservative input budget plus a capped output allowance in a PostgreSQL transaction. A transaction-scoped advisory lock serializes quota changes across instances. Each account can have one outstanding task.
+3. Team members share a budget equal to the **smallest token limit among the team's current members**; personal limits also apply. Historical team usage stays with the team even if a member moves. Quota reductions and team changes cannot invalidate already consumed or reserved team credits.
+4. The API enqueues a deterministic session job. BullMQ enforces `MAX_CONCURRENT_AGENTS` globally across workers. A database outbox recovers reservations interrupted before enqueueing; provider requests are not automatically retried.
+5. Worker events are persisted in Redis Streams. The API replays them from the beginning through SSE, handles socket backpressure and emits keepalives. Disconnecting or Ctrl+C cancels the task. A cancelled queued task releases its full reservation; a running task aborts at the provider and settles its quota.
+6. Successful usage, session status and reservation release commit atomically before the terminal success event. Incomplete output, HTTP failures and truncated streams produce failure and never apply files.
+
+Output is capped at 4096 tokens per task and a running task times out after ten minutes. If a stream is interrupted or a worker crashes, final provider usage may be unknowable. The full reservation is charged conservatively and the usage record is marked `estimated`; an organizer can reconcile these records against provider billing. Explicitly rejected provider requests are charged zero. Reservations use a conservative UTF-8 input bound, so a task may be refused even when a smaller tokenizer estimate would fit.
+
+`POST /api/agent/sessions/:id/cancel` also cancels a task owned by the authenticated user. Disabled accounts are rejected immediately and active workers detect the disablement within their polling interval. API rate limits are per authenticated account; login throttling uses the email and client address so participants sharing a campus IP do not consume each other's login allowance. Redis event and job retention is bounded by expiry/cleanup, and should be backed by monitored capacity and persistent storage in deployment.
+
+## Verification
+
+```sh
+npm test
+npm run lint --workspace=admin
+npm run build
+```
+
+The default tests cover API authentication and enqueue failures, file containment and rollback, stream parsing/failure handling, and quota application logic. A PostgreSQL integration test runs only when `TEST_DATABASE_URL` is set and requires a database name ending in `_test`:
+
+```sh
+docker compose -f docker-compose.test.yml up -d --wait
+# Set DATABASE_URL and TEST_DATABASE_URL to:
+# postgresql://postgres:test-password@localhost:5433/claude_hackathon_test
+npm run db:migrate
+npm test
+docker compose -f docker-compose.test.yml down
+```
+
+The integration test checks real concurrent reservations, exactly-once accounting and queued cancellation, and removes only the test users it creates. It does not call the model provider. For a full manual smoke test, set `REDIS_URL` to `redis://localhost:6380`, configure a provider key and admin account, start the API/dashboard, create two participants on the same team, and exercise queued tasks, cancellation and shared limits.
+
+## Deployment
+
+```sh
+npm ci
+npm run db:generate
+npm run db:migrate
+npm run build
+npm start
+```
+
+`npm start` runs the API and its worker. Run the dashboard separately with `npm run start --workspace=admin`, or deploy `apps/admin` to a Next.js host. Serve the API behind HTTPS with SSE buffering disabled and connection timeouts long enough for queued tasks. Use persistent PostgreSQL and Redis, set the provider key, JWT secret, trusted CORS origins, `PORT`, and worker concurrency. The CLI API URL is configurable at runtime; no source edit is needed. Publishing and deployment are separate steps and are not performed by this repository's build commands.
