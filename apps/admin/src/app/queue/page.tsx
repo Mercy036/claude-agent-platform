@@ -1,32 +1,34 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { apiFetch } from '@/lib/api';
 import { Clock, Activity, Loader2 } from 'lucide-react';
 
 export default function QueuePage() {
-  const [activeSessions, setActiveSessions] = useState<any[]>([]);
-  const [queuedSessions, setQueuedSessions] = useState<any[]>([]);
+  const [activeSessions, setActiveSessions] = useState<{ id: string; startedAt: string; createdAt: string; user: { email: string } }[]>([]);
+  const [queuedSessions, setQueuedSessions] = useState<{ id: string; startedAt: string; createdAt: string; user: { email: string } }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     const token = localStorage.getItem('admin_token');
     if (!token) {
-      window.location.href = '/users';
       return;
     }
 
     const fetchQueue = async () => {
       try {
-        const res = await fetch('http://localhost:3001/api/admin/queue', {
+        const res = await apiFetch('/api/admin/queue', {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         const data = await res.json();
+        setError('');
         if (data.queue) {
           setActiveSessions(data.queue.activeSessions);
           setQueuedSessions(data.queue.queuedSessions);
         }
       } catch (err) {
-        console.error("Failed to fetch queue", err);
+        setError(err instanceof Error ? err.message : 'Failed to fetch queue');
       } finally {
         setLoading(false);
       }
@@ -47,6 +49,7 @@ export default function QueuePage() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
+      {error && <p role="alert" className="text-red-400">{error}</p>}
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-white">Agent Queue</h1>
         <p className="text-muted-foreground mt-2">Monitor active AI sessions and pending requests in real-time.</p>
@@ -68,7 +71,7 @@ export default function QueuePage() {
                 No agents are currently running.
               </div>
             ) : (
-              activeSessions.map((session, i) => (
+              activeSessions.map((session) => (
                 <div key={session.id} className="p-4 rounded-xl bg-white/5 border border-emerald-500/20 hover:border-emerald-500/40 transition-colors flex items-center justify-between">
                   <div>
                     <div className="text-sm font-medium text-white">{session.user.email}</div>

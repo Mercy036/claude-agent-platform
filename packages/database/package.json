@@ -1,19 +1,25 @@
 {
   "name": "@claude-hackathon/database",
   "version": "1.0.0",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "generate": "prisma generate",
-    "push": "prisma db push",
-    "seed": "ts-node src/seed.ts"
+    "generate": "node scripts/prisma.cjs generate",
+    "push": "node scripts/prisma.cjs db push",
+    "seed": "tsx src/seed.ts",
+    "migrate": "node scripts/prisma.cjs migrate deploy",
+    "baseline": "node scripts/prisma.cjs migrate resolve --applied 202610130001_baseline"
   },
   "dependencies": {
-    "@prisma/client": "^5.13.0"
+    "@prisma/client": "^5.13.0",
+    "@claude-hackathon/shared": "*",
+    "bcrypt": "^6.0.0",
+    "dotenv": "^16.6.1"
   },
   "devDependencies": {
     "prisma": "^5.13.0",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "@types/bcrypt": "^6.0.0"
   }
 }

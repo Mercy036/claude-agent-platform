@@ -1,29 +1,30 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { apiFetch } from '@/lib/api';
 import { Activity, Users, Zap, Clock, Loader2 } from 'lucide-react';
 
 export default function DashboardOverview() {
-  const [metrics, setMetrics] = useState({ totalUsers: 0, totalTokens: 0, activeAgents: 0, queuedJobs: 0 });
+  const [metrics, setMetrics] = useState({ totalUsers: 0, totalTokens: 0, activeAgents: 0, queuedJobs: 0, maxConcurrentAgents: 5 });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     const token = localStorage.getItem('admin_token');
     if (!token) {
-      // Fast redirect if not logged in
-      window.location.href = '/users';
       return;
     }
 
     const fetchMetrics = async () => {
       try {
-        const res = await fetch('http://localhost:3001/api/admin/metrics', {
+        const res = await apiFetch('/api/admin/metrics', {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         const data = await res.json();
+        setError('');
         if (data.metrics) setMetrics(data.metrics);
       } catch (err) {
-        console.error("Failed to fetch metrics", err);
+        setError(err instanceof Error ? err.message : 'Failed to fetch metrics');
       } finally {
         setLoading(false);
       }
@@ -52,9 +53,10 @@ export default function DashboardOverview() {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
+      {error && <p role="alert" className="text-red-400">{error}</p>}
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-white">Live Dashboard</h1>
-        <p className="text-muted-foreground mt-2">Real-time overview of the hackathon platform's usage and agent activity.</p>
+        <p className="text-muted-foreground mt-2">Real-time overview of the hackathon platform&apos;s usage and agent activity.</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -79,11 +81,11 @@ export default function DashboardOverview() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Activity Chart Placeholder */}
         <div className="glass-panel p-6 bg-black/20">
-          <h3 className="text-lg font-medium text-white mb-4">Live Token Burn Rate</h3>
+          <h3 className="text-lg font-medium text-white mb-4">Usage Accounting</h3>
           <div className="h-64 flex items-center justify-center border border-white/5 rounded-lg bg-black/40">
             <p className="text-muted-foreground text-sm flex items-center gap-2">
               <Activity className="w-4 h-4" />
-              Monitoring network activity...
+              Token usage updates after each task settles.
             </p>
           </div>
         </div>
@@ -95,17 +97,17 @@ export default function DashboardOverview() {
             <div>
               <div className="flex justify-between text-sm mb-2">
                 <span className="text-slate-300">Agent Concurrency Capacity</span>
-                <span className="text-primary font-medium">{metrics.activeAgents} / 5</span>
+                <span className="text-primary font-medium">{metrics.activeAgents} / {metrics.maxConcurrentAgents}</span>
               </div>
               <div className="w-full bg-white/10 rounded-full h-2">
-                <div className="bg-primary h-2 rounded-full transition-all duration-1000" style={{ width: `${Math.min(100, (metrics.activeAgents / 5) * 100)}%` }}></div>
+                <div className="bg-primary h-2 rounded-full transition-all duration-1000" style={{ width: `${Math.min(100, (metrics.activeAgents / Math.max(1, metrics.maxConcurrentAgents)) * 100)}%` }}></div>
               </div>
             </div>
             
             <div>
               <div className="flex justify-between text-sm mb-2">
-                <span className="text-slate-300">Queue Processing Delay</span>
-                <span className="text-emerald-400 font-medium">{metrics.queuedJobs > 0 ? '~1.2s' : '0.0s'}</span>
+                <span className="text-slate-300">Queue Status</span>
+                <span className="text-emerald-400 font-medium">{metrics.queuedJobs > 0 ? 'Tasks waiting' : 'No tasks waiting'}</span>
               </div>
               <div className="w-full bg-white/10 rounded-full h-2">
                 <div className="bg-emerald-500 h-2 rounded-full" style={{ width: metrics.queuedJobs > 0 ? '10%' : '2%' }}></div>

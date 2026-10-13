@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
 import Sidebar from './Sidebar';
+import { apiFetch } from '@/lib/api';
 
 export default function AuthWrapper({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
@@ -11,17 +12,29 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
   const [loginPassword, setLoginPassword] = useState('');
 
   useEffect(() => {
-    const savedToken = localStorage.getItem('admin_token');
-    if (savedToken) {
-      setToken(savedToken);
-    }
-    setLoading(false);
+    let alive = true;
+    const expire = () => setToken(null);
+    window.addEventListener('auth-expired', expire);
+    const verify = async () => {
+      const savedToken = localStorage.getItem('admin_token');
+      try {
+        if (savedToken) {
+          const response = await apiFetch('/api/auth/me', { headers: { Authorization: `Bearer ${savedToken}` } });
+          const { user } = await response.json();
+          if (user?.role !== 'ADMIN') throw new Error('Admin access required');
+          if (alive) setToken(savedToken);
+        }
+      } catch { localStorage.removeItem('admin_token'); }
+      finally { if (alive) setLoading(false); }
+    };
+    void verify();
+    return () => { alive = false; window.removeEventListener('auth-expired', expire); };
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('http://localhost:3001/api/auth/login', {
+      const res = await apiFetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: loginEmail, password: loginPassword })
@@ -34,7 +47,7 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
         alert('Login failed or you are not an admin');
       }
     } catch (err) {
-      alert('Error logging in');
+      alert(err instanceof Error ? err.message : 'Error logging in');
     }
   };
 
@@ -97,7 +110,7 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
       <main className="flex-1 overflow-y-auto p-4 pl-0 animate-in fade-in duration-500">
         <div className="glass-panel min-h-full p-8 rounded-2xl relative">
           <button 
-            onClick={() => { localStorage.removeItem('admin_token'); window.location.href = '/'; }}
+            onClick={() => { localStorage.removeItem('admin_token'); setToken(null); }}
             className="absolute top-6 right-6 text-xs font-medium text-slate-400 hover:text-white transition-colors border border-white/10 px-3 py-1.5 rounded-md hover:bg-white/5"
           >
             Logout

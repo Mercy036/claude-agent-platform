@@ -31,6 +31,8 @@ model User {
   status       String   @default("ACTIVE") // ACTIVE, DISABLED
   tokenLimit   Int      @default(1000000)
   tokensUsed   Int      @default(0)
+  tokensReserved Int    @default(0)
+  authVersion  Int      @default(0)
   
   sessions     AgentSession[]
   usageRecords TokenUsage[]
@@ -46,6 +48,12 @@ model AgentSession {
   status         SessionStatus @default(QUEUED)
   environmentId  String?
   tokensUsed     Int           @default(0)
+  tokensReserved Int           @default(0)
+  quotaKey       String
+  request        Json?
+  inputTokens    Int           @default(0)
+  maxOutputTokens Int          @default(0)
+  settledAt      DateTime?
   
   startedAt      DateTime?
   endedAt        DateTime?
@@ -58,6 +66,7 @@ model AgentSession {
 
   @@index([userId])
   @@index([status])
+  @@index([quotaKey])
 }
 
 model TokenUsage {
@@ -67,6 +76,8 @@ model TokenUsage {
   sessionId           String
   session             AgentSession @relation(fields: [sessionId], references: [id])
   requestId           String       @unique
+  providerRequestId   String?
+  estimated           Boolean      @default(false)
   
   inputTokens         Int
   outputTokens        Int

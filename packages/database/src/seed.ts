@@ -1,51 +1,21 @@
-import { db } from './index';
+import dotenv from 'dotenv';
+import path from 'path';
+import bcrypt from 'bcrypt';
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
+let db: typeof import('./index').db;
 
 async function main() {
-  console.log('Seeding database...');
-
-  // Create default admin user
-  const adminEmail = 'admin@claude-hackathon.com';
-  const existingAdmin = await db.user.findUnique({ where: { email: adminEmail } });
-  
-  if (!existingAdmin) {
-    await db.user.create({
-      data: {
-        name: 'Admin',
-        email: adminEmail,
-        // In a real app, hash this password before storing.
-        password: 'admin-password',
-        role: 'ADMIN',
-        tokenLimit: 999999999,
-        team: 'Organizers'
-      }
-    });
-    console.log('Created default admin user');
+  db = (await import('./index')).db;
+  const email = process.env.ADMIN_EMAIL;
+  const password = process.env.ADMIN_PASSWORD;
+  if (!email || !password || Buffer.byteLength(password) < 12 || Buffer.byteLength(password) > 72) {
+    throw new Error('Set ADMIN_EMAIL and an ADMIN_PASSWORD of 12–72 UTF-8 bytes before seeding');
   }
-
-  // Create default settings
-  const settings = [
-    { key: 'HACKATHON_ENABLED', value: 'true' },
-    { key: 'DEFAULT_PARTICIPANT_LIMIT', value: '1000000' },
-    { key: 'MAX_CONCURRENT_AGENTS', value: '5' },
-    { key: 'REGISTRATION_ENABLED', value: 'true' },
-    { key: 'AGENT_ACCESS_ENABLED', value: 'true' }
-  ];
-
-  for (const setting of settings) {
-    await db.setting.upsert({
-      where: { key: setting.key },
-      update: {},
-      create: setting
-    });
-  }
-  console.log('Created default settings');
-}
-
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await db.$disconnect();
+  const hashed = await bcrypt.hash(password, 12);
+  await db.user.upsert({ where: { email },
+    create: { email, name: 'Admin', password: hashed, role: 'ADMIN', tokenLimit: 1000000000 },
+    update: { password: hashed, role: 'ADMIN', status: 'ACTIVE', authVersion: { increment: 1 } },
   });
+  console.log('Admin password set; existing admin tokens revoked');
+}
+main().catch(error => { console.error(error.message); process.exitCode = 1; }).finally(() => db?.$disconnect());

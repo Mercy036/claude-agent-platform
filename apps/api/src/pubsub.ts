@@ -1,16 +1,16 @@
 import Redis from 'ioredis';
+import type { EventSink } from '@claude-hackathon/shared';
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-
-export const redisPublisher = new Redis(REDIS_URL);
-export const redisSubscriber = new Redis(REDIS_URL);
-
-export function publishEvent(sessionId: string, event: string, data: any) {
-  const channel = `session:${sessionId}`;
-  const message = JSON.stringify({ event, data });
-  // Buffer event in a list so late-connecting clients can replay
-  const bufferKey = `session-buffer:${sessionId}`;
-  redisPublisher.rpush(bufferKey, message);
-  redisPublisher.expire(bufferKey, 300); // 5 min TTL
-  redisPublisher.publish(channel, message);
+export const streamKey = (sessionId: string) => `session-events:${sessionId}`;
+export function createEventStore() {
+  const connection = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', { maxRetriesPerRequest: 1, enableOfflineQueue: false });
+  connection.on('error', error => console.error('Event Redis error:', error.message));
+  const publish = (sessionId: string): EventSink => async (event, data) => {
+    const result = await connection.multi()
+      .xadd(streamKey(sessionId), '*', 'message', JSON.stringify({ event, data }))
+      .expire(streamKey(sessionId), 3600)
+      .exec();
+    if (!result || result.some(([error]) => error)) throw new Error('Could not persist stream event');
+  };
+  return { connection, publish };
 }

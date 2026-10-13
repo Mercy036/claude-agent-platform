@@ -1,213 +1,106 @@
 #!/usr/bin/env node
-
 import { Command } from 'commander';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
-import axios from 'axios';
-import EventSource from 'eventsource';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { stripVTControlCharacters } from 'node:util';
+import { collectContext, listProjectFiles, parseFileEdits, validateEdits, applyEdits } from './files.js';
+import { consumeResponse } from './stream.js';
 
-const program = new Command();
-const API_URL = process.env.HACKATHON_API_URL || 'http://localhost:3001';
-
-const CONFIG_DIR = path.join(os.homedir(), '.hackathon-luna');
+const API_URL = (process.env.HACKATHON_API_URL || 'http://localhost:3001').replace(/\/$/, '');
+const url = new URL(API_URL);
+if (!['http:', 'https:'].includes(url.protocol) || (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) {
+  throw new Error('Use HTTPS for remote API connections');
+}
+const CONFIG_DIR = path.join(os.homedir(), '.hackathon-claude');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-
-function saveConfig(config: any) {
-  if (!fs.existsSync(CONFIG_DIR)) {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  }
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+type Config = { token: string; apiUrl: string };
+function saveConfig(config: Config) {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  if (fs.lstatSync(CONFIG_DIR).isSymbolicLink() || (fs.existsSync(CONFIG_FILE) && fs.lstatSync(CONFIG_FILE).isSymbolicLink())) throw new Error('Unsafe configuration path');
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config), { mode: 0o600 });
+  fs.chmodSync(CONFIG_FILE, 0o600);
+}
+function loadConfig(): Config {
+  if (!fs.existsSync(CONFIG_FILE)) throw new Error('Run hackathon-claude login first');
+  if (fs.lstatSync(CONFIG_DIR).isSymbolicLink() || fs.lstatSync(CONFIG_FILE).isSymbolicLink()) throw new Error('Unsafe configuration path');
+  const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+  if (typeof config.token !== 'string' || config.apiUrl !== API_URL) throw new Error('Log in again for this API address');
+  return config;
+}
+async function api(route: string, token?: string, body?: unknown) {
+  const response = await fetch(`${API_URL}${route}`, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+  return data;
+}
+function reportUsage(data: { user: { tokensUsed: number; tokenLimit: number; tokensReserved: number }; teamQuota?: { tokensUsed: number; tokenLimit: number; tokensReserved: number } }) {
+  console.log(`Usage: ${data.user.tokensUsed.toLocaleString()} / ${data.user.tokenLimit.toLocaleString()} tokens; ${data.user.tokensReserved.toLocaleString()} reserved`);
+  if (data.teamQuota) console.log(`Shared team usage: ${data.teamQuota.tokensUsed.toLocaleString()} / ${data.teamQuota.tokenLimit.toLocaleString()}; ${data.teamQuota.tokensReserved.toLocaleString()} reserved`);
 }
 
-function loadConfig() {
-  if (fs.existsSync(CONFIG_FILE)) {
-    return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
-  }
-  return null;
-}
-
-program
-  .name('hackathon-claude')
-  .description('CLI to interact with the Claude Haiku Hackathon agent')
-  .version('1.0.0');
-
-program
-  .command('login')
-  .description('Login to the platform')
-  .action(async () => {
-    const answers = await inquirer.prompt([
-      { type: 'input', name: 'email', message: 'Email:' },
-      { type: 'password', name: 'password', message: 'Password:' }
-    ]);
-
-    try {
-      const response = await axios.post(`${API_URL}/api/auth/login`, answers);
-      saveConfig({ token: response.data.token, user: response.data.user });
-      console.log(chalk.green('✓ Login successful'));
-    } catch (error: any) {
-      console.error(chalk.red('Login failed.'), error.response?.data?.error || error.message);
-    }
-  });
-
-program
-  .command('logout')
-  .description('Logout of the platform')
-  .action(() => {
-    if (fs.existsSync(CONFIG_FILE)) {
-      fs.unlinkSync(CONFIG_FILE);
-    }
-    console.log(chalk.green('✓ Logged out successfully'));
-  });
-
-program
-  .command('status')
-  .description('Check usage status')
-  .action(async () => {
-    const config = loadConfig();
-    if (!config?.token) {
-      console.error(chalk.red('Not logged in. Run: hackathon-claude login'));
-      return;
-    }
-
-    try {
-      const response = await axios.get(`${API_URL}/api/auth/me`, {
-        headers: { Authorization: `Bearer ${config.token}` }
-      });
-      const user = response.data.user;
-      console.log(chalk.blue(`Usage: ${user.tokensUsed.toLocaleString()} / ${user.tokenLimit.toLocaleString()} tokens`));
-      console.log(chalk.green(`Remaining: ${(user.tokenLimit - user.tokensUsed).toLocaleString()}`));
-    } catch (error: any) {
-      console.error(chalk.red('Failed to fetch status:'), error.response?.data?.error || error.message);
-    }
-  });
-
-program
-  .description('Start a new agent task')
-  .action(async () => {
-    const config = loadConfig();
-    if (!config?.token) {
-      console.error(chalk.red('Not logged in. Run: hackathon-claude login'));
-      return;
-    }
-
-    try {
-      // Fetch initial status
-      const meResponse = await axios.get(`${API_URL}/api/auth/me`, {
-        headers: { Authorization: `Bearer ${config.token}` }
-      });
-      const user = meResponse.data.user;
-      
-      console.log(chalk.bold('Claude Haiku Hackathon'));
-      console.log(`Logged in as: ${chalk.blue(user.email)}`);
-      console.log(chalk.blue(`Usage: ${user.tokensUsed.toLocaleString()} / ${user.tokenLimit.toLocaleString()} tokens\n`));
-      
-      const { task } = await inquirer.prompt([
-        { type: 'input', name: 'task', message: 'What would you like Claude Haiku to do?' }
-      ]);
-      
-      console.log(chalk.yellow('\nStarting agent...'));
-
-      // Single request: POST returns SSE stream directly
-      const https = await import('https');
-      const http = await import('http');
-      const url = new URL(`${API_URL}/api/agent/run`);
-      const body = JSON.stringify({ task, cwd: process.cwd() });
-
-      const options = {
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: url.pathname,
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${config.token}`,
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-          'Accept': 'text/event-stream',
-        }
-      };
-
-      let agentResponse = '';
-
-      const transport = url.protocol === 'https:' ? https : http;
-      const req = (transport as any).request(options, (res: any) => {
-        let buffer = '';
-        res.setEncoding('utf8');
-
-        res.on('data', (chunk: string) => {
-          buffer += chunk;
-          const parts = buffer.split('\n\n');
-          buffer = parts.pop() ?? '';
-
-          for (const part of parts) {
-            const line = part.trim();
-            if (!line || line.startsWith(':')) continue; // skip keepalives
-            if (line.startsWith('data: ')) {
-              try {
-                const parsed = JSON.parse(line.slice(6));
-                const { event, data } = parsed;
-
-                if (event === 'LOG') {
-                  console.log(chalk.cyan(`\n[Agent] ${data.message}`));
-                } else if (event === 'DELTA') {
-                  process.stdout.write(chalk.white(data.text));
-                  agentResponse += data.text;
-                } else if (event === 'COMPLETED') {
-                  console.log(chalk.green('\n\n✓ Task completed successfully.'));
-
-                  const fileRegex = /<<<FILE:\s*(.+?)>>>\n([\s\S]*?)<<<ENDFILE>>>/g;
-                  let match;
-                  let filesCreated = 0;
-                  while ((match = fileRegex.exec(agentResponse)) !== null) {
-                    const filePath = path.join(process.cwd(), match[1].trim());
-                    const fileContent = match[2];
-                    const dir = path.dirname(filePath);
-                    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-                    fs.writeFileSync(filePath, fileContent.trim() + '\n');
-                    console.log(chalk.green(`✓ Wrote file: ${match[1].trim()}`));
-                    filesCreated++;
-                  }
-                  if (filesCreated > 0) {
-                    console.log(chalk.blue(`\nSuccessfully created/modified ${filesCreated} files!`));
-                  }
-                  process.exit(0);
-                } else if (event === 'FAILED') {
-                  console.error(chalk.red(`\n✗ Task failed: ${data.error}`));
-                  process.exit(1);
-                }
-              } catch {}
-            }
-          }
-        });
-
-        res.on('end', () => process.exit(0));
-        res.on('error', (e: Error) => {
-          console.error(chalk.red('Stream error: ' + e.message));
-          process.exit(1);
-        });
-      });
-
-      req.on('error', (e: Error) => {
-        console.error(chalk.red('Connection error: ' + e.message));
-        process.exit(1);
-      });
-
-      req.write(body);
-      req.end();
-
-      process.on('SIGINT', () => {
-        console.log(chalk.yellow('\nCancelling...'));
-        req.destroy();
-        process.exit(0);
-      });
-
-    } catch (error: any) {
-      console.error(chalk.red('Error:'), error.response?.data?.error || error.message);
-    }
-  });
-
-program.parse(process.argv);
-
-
+const program = new Command().name('hackathon-claude').description('Claude hackathon coding assistant').version('1.1.0');
+program.command('login').description('Log in to the platform').action(async () => {
+  const credentials = await inquirer.prompt([{ type: 'input', name: 'email', message: 'Email:' }, { type: 'password', name: 'password', message: 'Password:' }]);
+  const data = await api('/api/auth/login', undefined, credentials);
+  saveConfig({ token: data.token, apiUrl: API_URL });
+  console.log(chalk.green('Login successful'));
+});
+program.command('logout').description('Remove saved authentication').action(() => {
+  if (fs.existsSync(CONFIG_FILE)) fs.unlinkSync(CONFIG_FILE);
+  console.log('Logged out');
+});
+program.command('status').description('Check personal and team usage').action(async () => {
+  reportUsage(await api('/api/auth/me', loadConfig().token));
+});
+program.action(async () => {
+  const config = loadConfig();
+  const me = await api('/api/auth/me', config.token);
+  console.log(chalk.bold(`Claude Hackathon — ${me.user.email}`));
+  reportUsage(me);
+  const { task } = await inquirer.prompt([{ type: 'input', name: 'task', message: 'What should Claude do?', validate: (value: string) => value.trim().length > 0 || 'Enter a task' }]);
+  const root = fs.realpathSync(process.cwd());
+  const candidates = listProjectFiles(root);
+  const { paths } = candidates.length ? await inquirer.prompt([{
+    type: 'checkbox', name: 'paths', message: 'Select project files to share with the server and Anthropic (space selects; none are selected by default):', choices: candidates,
+  }]) : { paths: [] };
+  const files = collectContext(root, paths);
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  process.once('SIGINT', cancel);
+  const timeout = setTimeout(cancel, 60 * 60 * 1000);
+  let output = '';
+  try {
+    const response = await fetch(`${API_URL}/api/agent/run`, {
+      method: 'POST', headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify({ task, files }), signal: controller.signal,
+    });
+    await consumeResponse(response, ({ event, data }) => {
+      if (event === 'DELTA') {
+        if (typeof data.text !== 'string') throw new Error('Invalid text delta');
+        output += data.text;
+        if (output.length > 1024 * 1024) throw new Error('Response is too large');
+        process.stdout.write(stripVTControlCharacters(data.text).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, ''));
+      } else if (event === 'QUEUED') console.log(chalk.yellow('Task queued'));
+      else if (event === 'LOG') console.log(chalk.cyan(String(data.message)));
+    });
+  } finally { clearTimeout(timeout); process.off('SIGINT', cancel); }
+  const edits = parseFileEdits(output);
+  validateEdits(root, edits, files);
+  console.log(chalk.green('\nGeneration completed'));
+  if (!edits.length) return;
+  console.log('\nProposed file changes:');
+  for (const edit of edits) console.log(`  ${fs.existsSync(path.join(root, edit.path)) ? 'Modify' : 'Create'} ${edit.path}`);
+  const { apply } = await inquirer.prompt([{ type: 'confirm', name: 'apply', message: 'Apply these file changes shown above?', default: false }]);
+  if (!apply) { console.log('Changes were not applied'); return; }
+  const backups = applyEdits(root, edits, files);
+  console.log(chalk.green(`Applied ${edits.length} file changes`));
+  for (const backup of backups) console.log(`Original saved at: ${path.relative(root, backup)}`);
+});
+program.parseAsync(process.argv).catch(error => { console.error(chalk.red(error.message)); process.exitCode = 1; });

@@ -8,15 +8,26 @@
   ],
   "scripts": {
     "dev": "concurrently \"npm run dev --workspace=admin\" \"npm run dev --workspace=@claude-hackathon/api\"",
-    "build": "npm run build --workspaces --if-present",
-    "start": "npm run start --workspaces --if-present",
+    "build": "npm run db:generate && npm run build:core && npm run build -w admin",
+    "start": "npm run start -w @claude-hackathon/api",
     "db:generate": "npm run generate --workspace=@claude-hackathon/database",
     "db:push": "npm run push --workspace=@claude-hackathon/database",
-    "db:seed": "npm run seed --workspace=@claude-hackathon/database"
+    "db:seed": "npm run seed --workspace=@claude-hackathon/database",
+    "build:core": "npm run build -w @claude-hackathon/shared && npm run build -w @claude-hackathon/database && npm run build -w @claude-hackathon/queue && npm run build -w @claude-hackathon/agent && npm run build -w @claude-hackathon/api && npm run build -w @mercy036/hackathon-claude",
+    "predev": "npm run db:generate && npm run build:core",
+    "db:migrate": "npm run migrate -w @claude-hackathon/database",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "typecheck:admin": "tsc --noEmit -p apps/admin/tsconfig.json",
+    "pretest": "npm run build:core",
+    "db:baseline": "npm run baseline -w @claude-hackathon/database"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",
     "ts-node": "^10.9.2",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "tsx": "^4.20.0"
+  },
+  "engines": {
+    "node": ">=20.9"
   }
 }
