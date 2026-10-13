@@ -6,8 +6,8 @@ import AuthWrapper from '@/components/AuthWrapper';
 
 
 export const metadata: Metadata = {
-  title: 'Claude Hackathon Admin',
-  description: 'Manage participants, tokens, and agent queues.',
+  title: 'Hackathon Team API Admin',
+  description: 'Manage team API keys, dollar credit, and model usage.',
 };
 
 export default function RootLayout({

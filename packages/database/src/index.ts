@@ -14,3 +14,4 @@ export const db = globalThis.prisma ?? prismaClientSingleton();
 
 if (process.env.NODE_ENV !== 'production') globalThis.prisma = db;
 export * from './quota';
+export * from './gateway';

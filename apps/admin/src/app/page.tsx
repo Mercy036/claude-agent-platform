@@ -5,7 +5,7 @@ import { apiFetch } from '@/lib/api';
 import { Activity, Users, Zap, Clock, Loader2 } from 'lucide-react';
 
 export default function DashboardOverview() {
-  const [metrics, setMetrics] = useState({ totalUsers: 0, totalTokens: 0, activeAgents: 0, queuedJobs: 0, maxConcurrentAgents: 5 });
+  const [metrics, setMetrics] = useState({ totalTeams: 0, totalCreditUSD: '0', totalSpentUSD: '0', totalAvailableUSD: '0', totalReservedUSD: '0', gatewayActiveRequests: 0, maxGatewayConcurrency: 5 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -45,10 +45,10 @@ export default function DashboardOverview() {
   }
 
   const statCards = [
-    { label: "Active Participants", value: metrics.totalUsers.toString(), icon: Users, color: "text-blue-400", bg: "bg-blue-400/10" },
-    { label: "Total Tokens Burned", value: metrics.totalTokens.toLocaleString(), icon: Zap, color: "text-amber-400", bg: "bg-amber-400/10" },
-    { label: "Active Agents (Running)", value: metrics.activeAgents.toString(), icon: Activity, color: "text-emerald-400", bg: "bg-emerald-400/10" },
-    { label: "Queued Tasks", value: metrics.queuedJobs.toString(), icon: Clock, color: "text-purple-400", bg: "bg-purple-400/10" },
+    { label: "Teams", value: metrics.totalTeams.toString(), icon: Users, color: "text-blue-400", bg: "bg-blue-400/10" },
+    { label: "Model Spending", value: `$${Number(metrics.totalSpentUSD).toFixed(4)}`, icon: Zap, color: "text-amber-400", bg: "bg-amber-400/10" },
+    { label: "Active API Requests", value: metrics.gatewayActiveRequests.toString(), icon: Activity, color: "text-emerald-400", bg: "bg-emerald-400/10" },
+    { label: "Available Team Credit", value: `$${Number(metrics.totalAvailableUSD).toFixed(4)}`, icon: Clock, color: "text-purple-400", bg: "bg-purple-400/10" },
   ];
 
   return (
@@ -79,38 +79,36 @@ export default function DashboardOverview() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Activity Chart Placeholder */}
         <div className="glass-panel p-6 bg-black/20">
-          <h3 className="text-lg font-medium text-white mb-4">Usage Accounting</h3>
+          <h3 className="text-lg font-medium text-white mb-4">Credit Accounting</h3>
           <div className="h-64 flex items-center justify-center border border-white/5 rounded-lg bg-black/40">
             <p className="text-muted-foreground text-sm flex items-center gap-2">
               <Activity className="w-4 h-4" />
-              Token usage updates after each task settles.
+              Dollar charges settle when each model request finishes.
             </p>
           </div>
         </div>
 
-        {/* System Health */}
         <div className="glass-panel p-6 bg-black/20">
-          <h3 className="text-lg font-medium text-white mb-4">System Health</h3>
+          <h3 className="text-lg font-medium text-white mb-4">Gateway Activity</h3>
           <div className="space-y-6">
             <div>
               <div className="flex justify-between text-sm mb-2">
-                <span className="text-slate-300">Agent Concurrency Capacity</span>
-                <span className="text-primary font-medium">{metrics.activeAgents} / {metrics.maxConcurrentAgents}</span>
+                <span className="text-slate-300">Gateway Concurrency Capacity</span>
+                <span className="text-primary font-medium">{metrics.gatewayActiveRequests} / {metrics.maxGatewayConcurrency}</span>
               </div>
               <div className="w-full bg-white/10 rounded-full h-2">
-                <div className="bg-primary h-2 rounded-full transition-all duration-1000" style={{ width: `${Math.min(100, (metrics.activeAgents / Math.max(1, metrics.maxConcurrentAgents)) * 100)}%` }}></div>
+                <div className="bg-primary h-2 rounded-full transition-all duration-1000" style={{ width: `${Math.min(100, (metrics.gatewayActiveRequests / Math.max(1, metrics.maxGatewayConcurrency)) * 100)}%` }}></div>
               </div>
             </div>
             
             <div>
               <div className="flex justify-between text-sm mb-2">
-                <span className="text-slate-300">Queue Status</span>
-                <span className="text-emerald-400 font-medium">{metrics.queuedJobs > 0 ? 'Tasks waiting' : 'No tasks waiting'}</span>
+                <span className="text-slate-300">Reserved Team Credit</span>
+                <span className="text-emerald-400 font-medium">${Number(metrics.totalReservedUSD).toFixed(4)}</span>
               </div>
               <div className="w-full bg-white/10 rounded-full h-2">
-                <div className="bg-emerald-500 h-2 rounded-full" style={{ width: metrics.queuedJobs > 0 ? '10%' : '2%' }}></div>
+                <div className="bg-emerald-500 h-2 rounded-full" style={{ width: `${Math.min(100, Number(metrics.totalReservedUSD) / Math.max(0.000001, Number(metrics.totalCreditUSD)) * 100)}%` }}></div>
               </div>
             </div>
           </div>

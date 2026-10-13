@@ -96,3 +96,69 @@ model Setting {
   key   String @id
   value String
 }
+
+model Team {
+  id                    String   @id @default(uuid())
+  name                  String   @unique
+  status                String   @default("ACTIVE")
+  creditMicros          Int      @default(10000000)
+  spentMicros           Int      @default(0)
+  reservedMicros        Int      @default(0)
+  maxConcurrentRequests Int      @default(2)
+  requestsPerMinute     Int      @default(60)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  keys                  TeamApiKey[]
+  requests              GatewayRequest[]
+  creditChanges         TeamCreditChange[]
+}
+
+model TeamApiKey {
+  id         String    @id @default(uuid())
+  teamId     String
+  team       Team      @relation(fields: [teamId], references: [id])
+  name       String
+  keyHash    String    @unique
+  prefix     String
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+  requests   GatewayRequest[]
+  @@index([teamId])
+}
+
+model GatewayRequest {
+  id                    String    @id @default(uuid())
+  teamId                String
+  team                  Team      @relation(fields: [teamId], references: [id])
+  keyId                 String
+  key                   TeamApiKey @relation(fields: [keyId], references: [id])
+  model                 String
+  status                String    @default("RESERVED")
+  reservedMicros        Int
+  chargedMicros         Int       @default(0)
+  inputRateMicros        Int
+  outputRateMicros       Int
+  inputBudget           Int
+  maxOutputTokens       Int
+  inputTokens           Int       @default(0)
+  outputTokens          Int       @default(0)
+  estimated             Boolean   @default(false)
+  providerRequestId     String?
+  createdAt             DateTime  @default(now())
+  lastActivity          DateTime  @default(now())
+  settledAt             DateTime?
+  @@index([teamId, createdAt])
+  @@index([settledAt, lastActivity])
+}
+
+model TeamCreditChange {
+  id          String   @id @default(uuid())
+  teamId      String
+  team        Team     @relation(fields: [teamId], references: [id])
+  amountMicros Int
+  note        String
+  adminId     String
+  createdAt   DateTime @default(now())
+  @@index([teamId, createdAt])
+}
